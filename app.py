@@ -5,160 +5,160 @@ from datetime import datetime, timedelta
 import plotly.express as px
 
 # ==========================================
-# 1. CONFIGURAÇÕES E BANCO DE DADOS
+# 1. SETUP E BANCO DE DADOS
 # ==========================================
-st.set_page_config(page_title="MedFlow Pro - Gestão de Residência", layout="wide")
+st.set_page_config(page_title="MedFlow Ultra-Específico", layout="wide")
 
 def init_db():
-    conn = sqlite3.connect('medflow_data.db', check_same_thread=False)
+    conn = sqlite3.connect('medflow_vfinal.db', check_same_thread=False)
     c = conn.cursor()
-    # Tabela de progresso das aulas
+    # Tabela de progresso principal
     c.execute('''CREATE TABLE IF NOT EXISTS progresso 
                  (id_aula INTEGER PRIMARY KEY, status TEXT, dificuldade INTEGER, 
-                  acertos REAL, data_conclusao TEXT, proxima_revisao TEXT, semana TEXT)''')
-    # Tabela de simulados
+                  acertos REAL, data_conclusao TEXT, proxima_revisao TEXT, 
+                  semana TEXT, urgencia_simulado INTEGER DEFAULT 0)''')
+    # Tabela de simulados específicos por assunto
     c.execute('''CREATE TABLE IF NOT EXISTS simulados 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, questoes INTEGER, 
-                  tempo_minutos INTEGER, acertos_pct REAL)''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, id_aula INTEGER, 
+                  acertos_pct REAL, tempo_minutos INTEGER)''')
     conn.commit()
     return conn
 
 conn = init_db()
 
 # ==========================================
-# 2. CARREGAMENTO E TRATAMENTO DE DADOS (CORRIGIDO)
+# 2. CARREGAMENTO E LIMPEZA DE DADOS
 # ==========================================
 @st.cache_data
 def load_planner():
     file_path = 'Planner Extensivo MedCurso 2023 - Calendar.xlsx - Cronograma.csv'
     try:
-        # Pula as 2 primeiras linhas para ler os nomes das colunas corretamente
+        # Pula as 2 linhas de cabeçalho do MedCurso
         df = pd.read_csv(file_path, skiprows=2)
-        
-        # Limpa espaços em branco dos nomes das colunas
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Renomeia a primeira coluna vazia para 'SEMANA_REF' (onde ficam S1, S2...)
+        # Ajusta nome da coluna de semana e preenche para baixo
         if 'Unnamed: 0' in df.columns:
             df = df.rename(columns={'Unnamed: 0': 'SEMANA_REF'})
-        else:
-            # Garante que a primeira coluna seja a nossa referência de semana
-            df.rename(columns={df.columns[0]: 'SEMANA_REF'}, inplace=True)
-            
-        # Preenche as semanas para baixo (S1, S1, S1, S2, S2...)
         df['SEMANA'] = df['SEMANA_REF'].ffill()
         
-        # Remove linhas que não são aulas reais (linhas vazias no CSV)
+        # Remove linhas sem aula definida
         df = df.dropna(subset=['AULA'])
-        
+        # Garante que o ID seja inteiro
+        df['INDICE NUNCA ALTERE'] = df['INDICE NUNCA ALTERE'].astype(int)
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar o arquivo: {e}")
+        st.error(f"Erro ao carregar CSV: {e}")
         return pd.DataFrame()
 
 df_base = load_planner()
 
 # ==========================================
-# 3. LÓGICA DE INTELIGÊNCIA
+# 3. ALGORITMOS DE REVISÃO (SRS)
 # ==========================================
-def calcular_proxima_revisao(dificuldade, acertos):
+def calcular_revisao(dificuldade, acertos, urgencia=0):
     hoje = datetime.now()
-    if acertos < 70 or dificuldade >= 4:
+    # Prioridade máxima para erro em simulado específico
+    if urgencia == 1:
+        intervalo = 2 
+    elif acertos < 70 or dificuldade >= 4:
         intervalo = 7
     elif acertos < 85:
-        intervalo = 15
+        intervalo = 14
     else:
         intervalo = 30
     return (hoje + timedelta(days=intervalo)).strftime('%Y-%m-%d')
 
-AREAS_ALTA_INCIDENCIA = ['PEDIATRIA', 'GINECOLOGIA', 'OBSTETRÍCIA', 'PREVENTIVA', 'CIRURGIA']
-
 # ==========================================
-# 4. INTERFACE DO USUÁRIO
+# 4. INTERFACE WEB (UI/UX)
 # ==========================================
-st.sidebar.title("🩺 MedFlow Pro")
-menu = st.sidebar.radio("Navegação", ["Dashboard", "Cronograma Semanal", "Revisões de Hoje", "Modo Simulado (Velocidade)"])
+st.sidebar.title("🩺 MedFlow Intelligence")
+menu = st.sidebar.radio("Navegação", ["Dashboard & Heatmap", "Estudo Semanal", "Revisões (SRS)", "Diagnóstico Específico"])
 
 if df_base.empty:
-    st.warning("Aguardando carregamento do arquivo CSV...")
+    st.error("Base de dados não encontrada. Verifique o arquivo CSV.")
 else:
-    # --- ABA 1: DASHBOARD ---
-    if menu == "Dashboard":
-        st.title("🚀 Sua Evolução")
-        df_prog = pd.read_sql_query("SELECT * FROM progresso", conn)
+    # --- DASHBOARD COM HEATMAP ---
+    if menu == "Dashboard & Heatmap":
+        st.title("📊 Visão de Águia: Diagnóstico Visual")
+        df_p = pd.read_sql_query("SELECT * FROM progresso", conn)
         
-        if not df_prog.empty:
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Aulas Concluídas", len(df_prog))
-            col2.metric("Média Geral de Acertos", f"{df_prog['acertos'].mean():.1f}%")
+        if not df_p.empty:
+            df_m = df_p.merge(df_base[['INDICE NUNCA ALTERE', 'ÁREA', 'AULA']], left_on='id_aula', right_on='INDICE NUNCA ALTERE')
             
-            # Alertas
-            st.subheader("⚠️ Alertas de Áreas Críticas")
-            df_merged = df_prog.merge(df_base[['INDICE NUNCA ALTERE', 'ÁREA', 'AULA']], 
-                                      left_on='id_aula', right_on='INDICE NUNCA ALTERE')
+            # Métricas
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Aulas Concluídas", len(df_p))
+            c2.metric("Média de Acertos", f"{df_p['acertos'].mean():.1f}%")
+            c3.metric("Alertas de Urgência", len(df_p[df_p['urgencia_simulado'] == 1]))
+
+            # Heatmap de Performance
+            st.subheader("🔥 Mapa de Calor: Áreas Críticas")
+            st.info("Este gráfico correlaciona Dificuldade (eixo Y) com Acertos (eixo X). Bolhas maiores e vermelhas são seus maiores gaps.")
             
-            alertas = df_merged[(df_merged['ÁREA'].str.upper().str.contains('|'.join(AREAS_ALTA_INCIDENCIA), na=False)) & (df_merged['acertos'] < 75)]
-            
-            if not alertas.empty:
-                st.error(f"Foco aqui! {len(alertas)} temas de alta incidência estão abaixo de 75%.")
-                st.dataframe(alertas[['SEMANA', 'ÁREA', 'AULA', 'acertos']])
-            
-            fig = px.line(df_prog.sort_values('data_conclusao'), x='data_conclusao', y='acertos', title="Sua Curva de Performance")
+            fig = px.scatter(df_m, x="acertos", y="dificuldade", size="dificuldade", color="acertos",
+                             hover_name="AULA", title="Análise de Gap: Dificuldade vs Aproveitamento",
+                             color_continuous_scale=px.colors.sequential.RdBu_r)
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Registre sua primeira aula no menu 'Cronograma Semanal' para ver os dados.")
-
-    # --- ABA 2: CRONOGRAMA ---
-    elif menu == "Cronograma Semanal":
-        st.title("📅 Planejamento por Semana")
-        # Filtra apenas semanas válidas
-        semanas_validas = [s for s in df_base['SEMANA'].unique() if pd.notna(s)]
-        semana_sel = st.selectbox("Escolha a Semana", semanas_validas)
-        
-        aulas_semana = df_base[df_base['SEMANA'] == semana_sel]
-        
-        for _, row in aulas_semana.iterrows():
-            with st.expander(f"📖 {row['ÁREA']} - {row['AULA']}"):
-                with st.form(key=f"form_{row['INDICE NUNCA ALTERE']}"):
-                    col_d, col_a = st.columns(2)
-                    dif = col_d.select_slider("Dificuldade", options=[1, 2, 3, 4, 5], value=3)
-                    acertos = col_a.number_input("Acertos (%)", 0, 100, 75)
-                    
-                    if st.form_submit_button("Salvar Progresso"):
-                        prox_data = calcular_proxima_revisao(dif, acertos)
-                        c = conn.cursor()
-                        c.execute("REPLACE INTO progresso VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                   (int(row['INDICE NUNCA ALTERE']), 'Concluído', dif, acertos, 
-                                    datetime.now().strftime('%Y-%m-%d'), prox_data, semana_sel))
-                        conn.commit()
-                        st.success(f"Aula {row['INDICE NUNCA ALTERE']} salva! Próxima revisão: {prox_data}")
-
-    # --- ABA 3: REVISÕES ---
-    elif menu == "Revisões de Hoje":
-        st.title("🧠 Revisões Baseadas na Curva de Esquecimento")
-        hoje = datetime.now().strftime('%Y-%m-%d')
-        df_rev = pd.read_sql_query(f"SELECT * FROM progresso WHERE proxima_revisao <= '{hoje}'", conn)
-        
-        if df_rev.empty:
-            st.success("Tudo em dia! Aproveite para avançar no cronograma.")
-        else:
-            df_rev_completo = df_rev.merge(df_base[['INDICE NUNCA ALTERE', 'ÁREA', 'AULA']], 
-                                          left_on='id_aula', right_on='INDICE NUNCA ALTERE')
-            st.warning(f"Priorize estes {len(df_rev_completo)} temas hoje:")
-            st.table(df_rev_completo[['SEMANA', 'ÁREA', 'AULA', 'acertos', 'proxima_revisao']])
-
-    # --- ABA 4: MODO SIMULADO ---
-    elif menu == "Modo Simulado (Velocidade)":
-        st.title("⏱️ Treino de Agilidade")
-        with st.form("simulado_vel"):
-            col_q, col_t = st.columns(2)
-            q_total = col_q.number_input("Total de Questões", 1, 100, 50)
-            t_total = col_t.number_input("Tempo Total (Minutos)", 1, 300, 100)
-            nota = st.slider("Aproveitamento (%)", 0, 100, 75)
             
-            if st.form_submit_button("Analisar"):
-                seg_per_q = (t_total * 60) / q_total
-                if seg_per_q <= 120:
-                    st.success(f"Ótimo tempo! {seg_per_q:.1f} segundos por questão.")
+            
+
+        else:
+            st.info("Registre seus estudos para gerar o Mapa de Calor.")
+
+    # --- REGISTRO SEMANAL ---
+    elif menu == "Estudo Semanal":
+        st.title("📅 Registro de Conteúdo Novo")
+        semanas = [s for s in df_base['SEMANA'].unique() if pd.notna(s)]
+        sem_sel = st.selectbox("Escolha a Semana", semanas)
+        
+        for _, row in df_base[df_base['SEMANA'] == sem_sel].iterrows():
+            with st.expander(f"📖 {row['AULA']}"):
+                with st.form(key=f"f_{row['INDICE NUNCA ALTERE']}"):
+                    d_val = st.select_slider("O quanto você sofreu nesse tema? (1-Fácil, 5-Hard)", options=[1,2,3,4,5], value=3)
+                    a_val = st.number_input("Acertos na lista de questões (%)", 0, 100, 80)
+                    if st.form_submit_button("Salvar Progresso"):
+                        prox = calcular_revisao(d_val, a_val)
+                        conn.execute("REPLACE INTO progresso (id_aula, status, dificuldade, acertos, data_conclusao, proxima_revisao, semana, urgencia_simulado) VALUES (?,?,?,?,?,?,?,?)",
+                                   (int(row['INDICE NUNCA ALTERE']), 'Concluído', d_val, a_val, datetime.now().strftime('%Y-%m-%d'), prox, sem_sel, 0))
+                        conn.commit()
+                        st.success(f"Registrado! Próxima revisão em {prox}")
+
+    # --- REVISÕES ---
+    elif menu == "Revisões (SRS)":
+        st.title("🧠 Curva de Esquecimento Ativa")
+        hoje = datetime.now().strftime('%Y-%m-%d')
+        df_r = pd.read_sql_query(f"SELECT * FROM progresso WHERE proxima_revisao <= '{hoje}'", conn)
+        
+        if df_r.empty:
+            st.balloons()
+            st.success("Tudo revisado! Sua memória está em dia.")
+        else:
+            df_r = df_r.merge(df_base[['INDICE NUNCA ALTERE', 'ÁREA', 'AULA']], left_on='id_aula', right_on='INDICE NUNCA ALTERE')
+            st.warning("Temas que precisam de atenção hoje:")
+            # Estilizando para destacar urgências
+            st.dataframe(df_r[['urgencia_simulado', 'ÁREA', 'AULA', 'acertos', 'proxima_revisao']].sort_values('urgencia_simulado', ascending=False))
+
+    # --- DIAGNÓSTICO ESPECÍFICO ---
+    elif menu == "Diagnóstico Específico":
+        st.title("🎯 Diagnóstico de Precisão (Assunto)")
+        st.markdown("Use esta aba quando fizer um simulado geral e errar uma questão de um **tema específico**.")
+        
+        c1, c2 = st.columns(2)
+        area_f = c1.selectbox("Filtrar Área", df_base['ÁREA'].unique())
+        aula_f = c2.selectbox("Selecione o Assunto Exato do Erro", df_base[df_base['ÁREA'] == area_f]['AULA'].unique())
+        
+        row_sel = df_base[df_base['AULA'] == aula_f].iloc[0]
+        id_target = int(row_sel['INDICE NUNCA ALTERE'])
+        
+        with st.form("diag_form"):
+            nota_err = st.slider("Desempenho no simulado para este tema (%)", 0, 100, 50)
+            if st.form_submit_button("Aplicar Re-rating"):
+                # Se nota for baixa, ativa urgência e puxa revisão para daqui a 2 dias
+                if nota_err < 75:
+                    prox_urgente = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d')
+                    conn.execute("UPDATE progresso SET urgencia_simulado = 1, proxima_revisao = ? WHERE id_aula = ?", (prox_urgente, id_target))
+                    st.error(f"PONTO FALHO DETECTADO! O tema '{aula_f}' foi movido para revisão prioritária em 48h.")
                 else:
-                    st.warning(f"Cuidado! {seg_per_q:.1f}s por questão. O ideal é abaixo de 120s.")
+                    st.success("Nota dentro da meta. Mantendo cronograma original.")
+                conn.commit()
